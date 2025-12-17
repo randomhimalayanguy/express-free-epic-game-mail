@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/send-to-mailList",
+      "schedule": "30 3 * * *"
+    }
+  ]
+}

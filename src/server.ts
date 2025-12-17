@@ -25,7 +25,7 @@ class AppError extends Error{
 mongoose.connect(MONGODB_URI)
 .then(()=>{
     console.log('Database connected');
-    app.listen(Number(PORT), ()=>console.log('Server started'));
+    // app.listen(Number(PORT), ()=>console.log('Server started'));
 })
 .catch((error)=>{
     console.log(`Can't connect to database : ${error}`);
@@ -294,3 +294,5 @@ app.use((err: AppError, req: Request, res: Response, next : NextFunction) => {
   res.status(err.statusCode).json({ error: err.message});
 });
 
+
+export default app;
