@@ -108,23 +108,22 @@ transporter.verify((error, success) => {
 
 
 // functions
-const formatDate = (date : string) =>{
-    const initial = date.split('T')[0].split('-');
-    const formattedDate = initial.reverse().join('-');
-    return formattedDate;
+const formatDate = (dateStr : string) =>{
+  return new Date(dateStr).toLocaleDateString('en-IN');
 }
 
-const formatToHTML = (games : IGame[]) : string => {
-  const html = games.map((ele)=>{
-    return `<h2>${ele.game}</h2>
+const formatToHTML = (ele : IGame) : string => {
+  const html = `
+    <h1>Free Game from Epic Store</h1>
+    <h2>${ele.game}</h2>
     <h4>Start Date : ${ele.startDate}</h4>
-    <h4>End Date : ${ele.endDate}</h4>`
-  }).join('<br>');
+    <h4>End Date : ${ele.endDate}</h4>
+    `;
   
   return html || '';
 }
 
-const curGame = async () : Promise<IGame[]> =>{
+const curGame = async () : Promise<IGame | null> =>{
     const now = new Date();
     const response = await fetch(URL);
     const data = await response.json() as ApiResponse;
@@ -136,24 +135,20 @@ const curGame = async () : Promise<IGame[]> =>{
         return (ele.expiryDate !== null && now > effectiveDateFormatted);
     });
 
-    const gamesDetail : IGame[] = currentFreeGames.map((ele) => {
-        return {
-            game : ele.title, 
-            startDate : formatDate(ele.effectiveDate), 
-            endDate : formatDate(ele.expiryDate)
-        };
-    });
-    return gamesDetail;
-}
+    if(!currentFreeGames.length) return null;
 
-const curGameFormatted = async ()=>{
-    const gamesDetail = await curGame();
-    const gameHTML = formatToHTML(gamesDetail);
-    return gameHTML;
+    const curFreeGame = currentFreeGames[0];
+
+    const gameDetail : IGame = {
+      game : curFreeGame.title, 
+      startDate : formatDate(curFreeGame.effectiveDate), 
+      endDate : formatDate(curFreeGame.expiryDate)
+    };
+    return gameDetail;
 }
 
 interface IMailOptions{
-  to : string[], 
+  to : string | string[], 
   subject? : string,
   text? : string, 
   html? : string
@@ -161,9 +156,11 @@ interface IMailOptions{
 
 const sendMail = async ({to, subject = 'Free epic game', text, html} : IMailOptions) =>{
   try {
+    const recipients = Array.isArray(to) ? to.join(', ') : to;
     const mailOptions = {
       from: EMAIL_CONFIG.user,
-      to: to || 'somemail@gmail.com',
+      [(Array.isArray(to) && to.length > 1)? 'bcc' : 'to'] : recipients,
+      // to: to || 'somemail@gmail.com',
       subject: subject || 'Free epic game',
       text: text || '',
       html: html || ''
@@ -201,7 +198,7 @@ app.get(['/', '/checkgame'], async (req: Request, res: Response, next : NextFunc
         res.json({gamesDetail});
     }
     catch(err){
-        console.log(`Can't check the game : ${err}`);
+        next(new AppError(`Can't check the game : ${err}`));
     }
 });
 
@@ -217,9 +214,11 @@ app.post('/add-mail', emailVal, async (req : Request, res : Response, next : Nex
     const newMail = new mailList({email});
     await newMail.save();
 
-    const html = await curGameFormatted();
-
-    await sendMail({to : email, html});
+    const game = await curGame();
+    if(game){
+      const html = formatToHTML(game);
+      await sendMail({to : email, html});
+    }
 
     res.status(201).json({msg : "Email added to list"});
   }
@@ -229,29 +228,32 @@ app.post('/add-mail', emailVal, async (req : Request, res : Response, next : Nex
 });
 
 
-// Send email endpoint
-app.post('/send-email', async (req: Request, res: Response, next : NextFunction) => {
-  try{
-    const { to, subject, text, html } = req.body;
-    await sendMail({to, subject, text, html});
-    res.status(200).json({msg : "Mail sent"});
-  }
-  catch(error){
-    next(new AppError('Failed to send email', 500));
-  }
-});
-
-
 app.post('/send-to-mailList', async (req : Request, res : Response, next : NextFunction)=>{
   try{
     const latestGame = await curGame();
-    const latestSavedGame = await gameList.findOne({}, {sort : -1});
+    if(!latestGame)
+      return new AppError(`Can't load current game`, 500);
+
+    const latestSavedGame = await gameList.findOne({}).sort({createdAt : -1});
+
+    if(latestGame.game === latestSavedGame?.game){
+      return res.status(200).json({msg : "Same game"});
+    }
+
+    const newGame = new gameList({
+      game : latestGame.game, 
+      startDate : latestGame.startDate, 
+      endDate : latestGame.endDate
+    });
+
+    await newGame.save();
 
     const list = await mailList.find();
-    const emailList = list.map(ele => ele.email);
-    const html = await curGameFormatted();
-    await sendMail({to : emailList, html});
+    const mailingList = list.map(ele => ele.email);
 
+    await sendMail({to : mailingList, html : formatToHTML(latestGame)});
+
+    res.status(200).json({name : latestGame.game});
   }
   catch(error){
     next(new AppError(`Can't send mails to mail list : ${error}`));
@@ -259,11 +261,21 @@ app.post('/send-to-mailList', async (req : Request, res : Response, next : NextF
 });
 
 
+app.post('/remove-latest-game', async (req : Request, res : Response, next : NextFunction)=>{
+  try{
+    await gameList.findOneAndDelete({}, {sort : {createdAt : -1}});
+    res.status(200).json({msg : "Game deleted"});
+  }
+  catch(error){
+    next(new AppError(`Can't remove game : ${error}`));
+  }
+})
+
+
 app.post('/remove-mail', emailVal, async (req : Request, res : Response, next : NextFunction)=>{
   try{
     const { email } = req.body;
-    
-    const mail = await mailList.findOneAndDelete({email});
+    await mailList.findOneAndDelete({email});
 
     res.status(200).json({msg : `Mail removed`});
   }
