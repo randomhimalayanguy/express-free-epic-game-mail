@@ -249,6 +249,9 @@ app.post('/send-to-mailList', async (req : Request, res : Response, next : NextF
     await newGame.save();
 
     const list = await mailList.find();
+    if(!list.length){
+      return next(new AppError(`No user`));
+    }
     const mailingList = list.map(ele => ele.email);
 
     await sendMail({to : mailingList, html : formatToHTML(latestGame)});
