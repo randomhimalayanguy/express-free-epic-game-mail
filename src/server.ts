@@ -39,15 +39,33 @@ app.use(cors());
 
 
 // Interfaces
-interface ApiResponse{
-    data : {
-        Catalog : {
-            searchStore : {
-                elements : any[]
-            }
-        }
-    }
+interface ApiResponse {
+  data: {
+    Catalog: {
+      searchStore: {
+        elements: StoreElement[];
+      };
+    };
+  };
 }
+
+interface StoreElement {
+  title: string;
+  promotions?: {
+    promotionalOffers?: {
+      promotionalOffers: Promotion[];
+    }[];
+  };
+}
+
+interface Promotion {
+  startDate: string;
+  endDate: string;
+  discountSetting: {
+    discountPercentage: number;
+  };
+}
+
 
 
 interface IGame{
@@ -126,25 +144,33 @@ const formatToHTML = (ele : IGame) : string => {
 const curGame = async () : Promise<IGame | null> =>{
     const now = new Date();
     const response = await fetch(URL);
-    const data = await response.json() as ApiResponse;
+    const data = (await response.json()) as ApiResponse;
+    const elements = data?.data?.Catalog?.searchStore?.elements ?? [];
 
-    const games = data.data.Catalog.searchStore.elements;
+  for (const game of elements) {
+    const promos = game.promotions?.promotionalOffers?.flatMap(block => block.promotionalOffers) ?? [];
 
-    const currentFreeGames = games.filter((ele)=>{
-        const effectiveDateFormatted = new Date(ele.effectiveDate);
-        return (ele.expiryDate !== null && now > effectiveDateFormatted);
+    const activePromo = promos.find(promo => {
+      const start = new Date(promo.startDate);
+      const end = new Date(promo.endDate);
+
+      return (
+        promo.discountSetting.discountPercentage === 0 &&
+        now >= start &&
+        now <= end
+      );
     });
 
-    if(!currentFreeGames.length) return null;
+    if (activePromo) {
+      return {
+        game: game.title,
+        startDate: formatDate(activePromo.startDate),
+        endDate: formatDate(activePromo.endDate)
+      };
+    }
+  }
 
-    const curFreeGame = currentFreeGames[0];
-
-    const gameDetail : IGame = {
-      game : curFreeGame.title, 
-      startDate : formatDate(curFreeGame.effectiveDate), 
-      endDate : formatDate(curFreeGame.expiryDate)
-    };
-    return gameDetail;
+  return null;
 }
 
 interface IMailOptions{
@@ -160,7 +186,6 @@ const sendMail = async ({to, subject = 'Free epic game', text, html} : IMailOpti
     const mailOptions = {
       from: EMAIL_CONFIG.user,
       [(Array.isArray(to) && to.length > 1)? 'bcc' : 'to'] : recipients,
-      // to: to || 'somemail@gmail.com',
       subject: subject || 'Free epic game',
       text: text || '',
       html: html || ''
@@ -253,7 +278,6 @@ app.post('/send-to-mailList', async (req : Request, res : Response, next : NextF
       return next(new AppError(`No user`));
     }
     const mailingList = list.map(ele => ele.email);
-
     await sendMail({to : mailingList, html : formatToHTML(latestGame)});
 
     res.status(200).json({name : latestGame.game});
